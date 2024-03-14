@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers import ResBlock
+from layers4 import ResBlock
 import math
 from torch.nn.init import _calculate_fan_in_and_fan_out
 from timm.models.layers import trunc_normal_
@@ -39,24 +39,6 @@ class Get_gradient_nopadding(nn.Module):
 
         return x
 
-
-class LayerNorm(nn.Module):
-    def __init__(self, dim, eps=1e-5):
-        super(LayerNorm, self).__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones((1, dim, 1, 1)))
-        self.bias = nn.Parameter(torch.zeros((1, dim, 1, 1)))
-
-    def forward(self, input):
-        mean = torch.mean(input, dim=(1, 2, 3), keepdim=True)
-        std = torch.sqrt((input - mean).pow(2).mean(dim=(1, 2, 3), keepdim=True) + self.eps)
-
-        normalized_input = (input - mean) / std
-
-        out = normalized_input * self.weight + self.bias
-        return out
-
-
 class PALayer(nn.Module):
     def __init__(self, channel):
         super(PALayer, self).__init__()
@@ -89,6 +71,7 @@ class CALayer(nn.Module):
         y = self.ca(y)
         return x * y
 
+
 class Block(nn.Module):
     def __init__(self, dim):
         super(Block, self).__init__()
@@ -109,34 +92,14 @@ class Block(nn.Module):
         res3=self.conv3(res3)
         res3 += x
         return res3
-# class Block(nn.Module):
-#     def __init__(self, dim):
-#         super(Block, self).__init__()
-#         self.conv1 = nn.Conv2d(dim, dim, 3, padding=1, bias=True)
-#         self.act1 = nn.ReLU(inplace=True)
-#         self.conv2 = nn.Conv2d(dim, dim, 3, padding=1, bias=True)
-#         self.conv3 = nn.Conv2d(dim * 2, dim, 1, padding=0)
-#         self.calayer = CALayer(dim)
-#         self.palayer = PALayer(dim)
-#
-#     def forward(self, x):
-#         res = self.act1(self.conv1(x))
-#         res = res + x
-#         res = self.conv2(res)
-#         res1 = self.calayer(res)
-#         res2 = self.palayer(res1)
-#         # res3=torch.cat((res1,res2),dim=1)
-#         # res3=self.conv3(res3)
-#         res2 += x
-#         return res2
-#
 
 
 
-class LKDBlocks(nn.Module):
+
+class EGADBlocks(nn.Module):
     def __init__(self, dim):
-        super(LKDBlocks, self).__init__()
-        # 使用 nn.Sequential 定义一个包含 Block、Conv2d 和 LAM 的序列
+        super(EGADBlocks, self).__init__()
+
         self.c1 =Block(dim)
         self.c2 = Block(dim)
         self.c3 = ResBlock(dim,dim)
@@ -148,6 +111,7 @@ class LKDBlocks(nn.Module):
         x = self.c2(x)
         # print('0', x.shape)
         x = self.c3(x)
+        # print('1', x.shape)
 
         return x
 
@@ -244,9 +208,9 @@ class BasicConv(nn.Module):
         return self.main(x)
 
 
-class SCM(nn.Module):
+class EEM(nn.Module):
     def __init__(self, out_plane):
-        super(SCM, self).__init__()
+        super(EEM, self).__init__()
 
         self.main = nn.Sequential(
             BasicConv(3, out_plane // 4, kernel_size=3, stride=1, relu=True),
@@ -261,9 +225,9 @@ class SCM(nn.Module):
         return x
 
 
-class SCM2(nn.Module):
+class EEM2(nn.Module):
     def __init__(self, out_plane):
-        super(SCM2, self).__init__()
+        super(EEM2, self).__init__()
 
         self.main = nn.Sequential(
 
@@ -305,31 +269,33 @@ class CAT(nn.Module):
 
 
 class Dehaze(nn.Module):
-    def __init__(self, in_chans=3, out_chans=4,
+ def __init__(self, in_chans=3, out_chans=4,
                  embed_dims=[24, 48, 96, 48, 24]):
+
         super(Dehaze, self).__init__()
 
         self.patch_size = 4
+
 
         self.patch_embed = PatchEmbed(
             patch_size=1, in_chans=in_chans, embed_dim=embed_dims[0], kernel_size=3)
 
         # backbone
-        self.layer1 = LKDBlocks(dim=embed_dims[0])
+        self.layer1 = EGADBlocks( dim=embed_dims[0])
 
         self.patch_merge1 = PatchEmbed(
             patch_size=2, in_chans=embed_dims[0], embed_dim=embed_dims[1])
 
         self.skip1 = nn.Conv2d(embed_dims[0], embed_dims[0], 1)
 
-        self.layer2 = LKDBlocks(dim=embed_dims[1])
+        self.layer2 = EGADBlocks( dim=embed_dims[1])
 
         self.patch_merge2 = PatchEmbed(
             patch_size=2, in_chans=embed_dims[1], embed_dim=embed_dims[2])
 
         self.skip2 = nn.Conv2d(embed_dims[1], embed_dims[1], 1)
 
-        self.layer3 = LKDBlocks(dim=embed_dims[2])
+        self.layer3 = EGADBlocks( dim=embed_dims[2])
 
         self.patch_split1 = PatchUnEmbed(
             patch_size=2, out_chans=embed_dims[3], embed_dim=embed_dims[2])
@@ -337,7 +303,7 @@ class Dehaze(nn.Module):
         assert embed_dims[1] == embed_dims[3]
         self.fusion1 = SKFusion(embed_dims[3])
 
-        self.layer4 = LKDBlocks(dim=embed_dims[3])
+        self.layer4 = EGADBlocks( dim=embed_dims[3])
 
         self.patch_split2 = PatchUnEmbed(
             patch_size=2, out_chans=embed_dims[4], embed_dim=embed_dims[3])
@@ -345,22 +311,23 @@ class Dehaze(nn.Module):
         assert embed_dims[0] == embed_dims[4]
         self.fusion2 = SKFusion(embed_dims[4])
 
-        self.layer5 = LKDBlocks(dim=embed_dims[4])
+        self.layer5 = EGADBlocks(dim=embed_dims[4])
 
         self.patch_unembed = PatchUnEmbed(
             patch_size=1, out_chans=out_chans, embed_dim=embed_dims[4], kernel_size=3)
         self.get_g_nopadding = Get_gradient_nopadding()
 
-        self.conv_out = nn.Conv2d(3, 3, kernel_size=3, padding=1, bias=False)
-        self.SCM1 = SCM(embed_dims[0])
-        self.SCM2 = SCM2(embed_dims[1])
-        self.SCM3 = SCM2(embed_dims[2])
+        self.conv_out= nn.Conv2d(6, 3, kernel_size=3, padding=1,bias=False)
+        self.EEM1 = EEM(embed_dims[0])
+        self.EEM2 = EEM(embed_dims[1])
+        self.EEM3 = EEM(embed_dims[2])
         self.ConvsOut = ConvsOut(embed_dims[2])
-        self.CAT = CAT(embed_dims[0])
+        self.CAT=CAT(embed_dims[0])
         self.CAT1 = CAT(embed_dims[1])
         self.CAT2 = CAT(embed_dims[2])
 
-    def check_image_size(self, x):
+
+ def check_image_size(self, x):
         _, _, h, w = x.size()
         patch_size = self.patch_size
         mod_pad_h = (patch_size - h % patch_size) % patch_size
@@ -368,83 +335,52 @@ class Dehaze(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
-    def forward(self, x):
-        # edge
+ def forward(self, x):
+        #edge
 
         x_grad = self.get_g_nopadding(x)
-        c1 = self.SCM1(x_grad)
-        # print(c1.shape)#torch.Size([2, 24, 64, 64])
-        x2 = F.interpolate(c1, scale_factor=0.5)  # torch.Size([2, 24, 32, 32])
-        # print('1',x2.shape)#torch.Size([2, 24, 32, 32])
-        c2 = self.SCM2(x2)  #
-        # print('1',c2.shape)#torch.Size([2, 48, 32, 32])
-        x3 = F.interpolate(c2, scale_factor=0.5)
-        # print('2',x3.shape)
-        c3 = self.SCM3(x3)
-        # print('3',c3.shape)
+        c1=self.EEM1(x_grad)
+        x2 = F.interpolate(x_grad, scale_factor=0.5)#torch.Size([2, 24, 32, 32])
+        c2=self.EEM2(x2)
+        x3 = F.interpolate(x2, scale_factor=0.5)
+        c3 = self.EEM3(x3)
 
         feature = self.ConvsOut(c3)
-        feature += x_grad
-        # feature=torch.cat((feature,x_grad),dim=1)
-        # print(feature.shape)
-        feature = self.conv_out(feature)
-
-        # dehaze
+        feature=torch.cat((feature,x_grad),dim=1)
+        feature=self.conv_out(feature)
+        #dehaze
         H, W = x.shape[2:]
         x_1 = self.check_image_size(x)
-
-        # print('1',x.shape)#torch.Size([2, 3, 64, 64])
         x = self.patch_embed(x)
-        # print('2', x.shape)#torch.Size([2, 24, 620, 460])
-        # x=self.CAT(x,c1)
         x = self.layer1(x)
-        # print('3', x.shape)#torch.Size([2, 24, 64, 64])
+        x = self.CAT(x, c1)
         skip1 = x
-
         x = self.patch_merge1(x)
-        # x = self.CAT1(x, c2)
-        #  print('4', x.shape)#torch.Size([2, 48, 32, 32])
         x = self.layer2(x)
-        #   print('5', x.shape)#torch.Size([2, 48, 32, 32])
+        x = self.CAT1(x, c2)
         skip2 = x
 
         x = self.patch_merge2(x)
-        # x = self.CAT2(x, c3)
-        #  print('6', x.shape)#Torch.Size([2, 96, 16, 16])
-        # print('1', x.shape)
-        x = self.CAT2(x, c3)
-        # print('2', x.shape)
+
 
         x = self.layer3(x)
-        # print('3', x.shape)
-
-        # print('8', x.shape)
+        x = self.CAT2(x, c3)
         x = self.patch_split1(x)
-        # print('8', x.shape)#torch.Size([2, 48, 32, 32])
-
         x = self.fusion1([x, self.skip2(skip2)]) + x
-        # print('9', x.shape)
-        x = self.CAT1(x, c2)
         x = self.layer4(x)
-
         x = self.patch_split2(x)
-        # print('11', x.shape)#torch.Size([2, 24, 64, 64])
         x = self.fusion2([x, self.skip1(skip1)]) + x
-        # print('12', x.shape)
-        x = self.CAT(x, c1)
         x = self.layer5(x)
-
-        feat = self.patch_unembed(x)
+        feat= self.patch_unembed(x)
         K, B = torch.split(feat, (1, 3), dim=1)
 
         x_1 = K * x_1 - B + x_1
         x_1 = x_1[:, :, :H, :W]
-        #  print('14',x_1.shape) #torch.Size([2, 3, 64, 64])
-        return x_1, feature
-if __name__ == "__main__":
-    # net = MRB(3,64,64,2,False,1)
-    net=Dehaze()
-    print(net)
-from torchsummary import summary
-
-summary(net, input_size=(3, 640,480), batch_size=1)
+        return x_1,feature
+# if __name__ == "__main__":
+#
+#     net=Dehaze()
+#     print(net)
+# from torchsummary import summary
+#
+# summary(net, input_size=(3, 64,64), batch_size=1)
