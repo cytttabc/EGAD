@@ -1,4 +1,4 @@
-EGAD:A Edge-Guided Attention Network for Airport Runway Images Dehazing
+EGAD:A Edge-Guided Attention Network for Airport Runway Images Dehazing From Aircraft Landing Perspective
 
 
 The project is built with PyTorch 3.8, PyTorch 1.8.1. CUDA 11.2,
